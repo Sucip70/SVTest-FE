@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
+import Image from '@tiptap/extension-image'
 import StarterKit from '@tiptap/starter-kit'
-import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Eye, FilePenLine, Heading2, Italic, List as ListIcon, ListOrdered, Plus, RotateCcw, Send, Trash2 } from 'lucide-react'
+import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Eye, FileImage, FilePenLine, Heading2, Italic, List as ListIcon, ListOrdered, Plus, RotateCcw, Send, Trash2 } from 'lucide-react'
 import './App.css'
 
 const API_BASE_URL = import.meta.env.DEV ? '/api' : 'https://svtest-1014951496037.asia-southeast2.run.app'
@@ -584,7 +585,10 @@ function ArticleForm({ article, isEditing, onBack, onChange, onSubmit }) {
 
 function RichTextEditor({ error, value, onChange }) {
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [
+      StarterKit,
+      Image.configure({ inline: false }),
+    ],
     content: value,
     editorProps: {
       attributes: {
@@ -599,6 +603,14 @@ function RichTextEditor({ error, value, onChange }) {
 
   function activeClass(name, attributes) {
     return editor?.isActive(name, attributes) ? 'tool-button active' : 'tool-button'
+  }
+
+  function addImage() {
+    const url = window.prompt('Image URL')
+
+    if (url) {
+      editor?.chain().focus().setImage({ src: url }).run()
+    }
   }
 
   return (
@@ -645,6 +657,14 @@ function RichTextEditor({ error, value, onChange }) {
             aria-label="Ordered list"
           >
             <ListOrdered size={16} />
+          </button>
+          <button
+            className="tool-button"
+            type="button"
+            onClick={addImage}
+            aria-label="Insert image"
+          >
+            <FileImage size={16} />
           </button>
         </div>
         <EditorContent editor={editor} />
