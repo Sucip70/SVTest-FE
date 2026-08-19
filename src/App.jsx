@@ -1,37 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Eye, FilePenLine, Heading2, Italic, List as ListIcon, ListOrdered, Plus, RotateCcw, Send, Trash2 } from 'lucide-react'
 import './App.css'
 
-const tabs = [
-  { label: 'Published', value: 'Published' },
-  { label: 'Drafts', value: 'Draft' },
-  { label: 'Trashed', value: 'Trashed' },
-]
+const API_BASE_URL = import.meta.env.DEV ? '/api' : 'https://svtest-1014951496037.asia-southeast2.run.app'
+const POST_LIMIT = 2
 
-const initialArticles = [
-  {
-    id: 1,
-    title: 'Getting started with React',
-    category: 'Frontend',
-    content: 'React helps build reusable user interface components.',
-    status: 'Published',
-  },
-  {
-    id: 2,
-    title: 'Basic form validation',
-    category: 'Frontend',
-    content: 'Validation keeps submitted data complete and easier to process.',
-    status: 'Draft',
-  },
-  {
-    id: 3,
-    title: 'Working with database indexes',
-    category: 'Database',
-    content: 'Indexes help database queries find rows faster when used on the right columns.',
-    status: 'Published',
-  },
+const tabs = [
+  { label: 'Published', value: 'Publish' },
+  { label: 'Drafts', value: 'Draft' },
+  { label: 'Trashed', value: 'Trash' },
 ]
 
 const emptyArticle = {
@@ -40,25 +19,112 @@ const emptyArticle = {
   content: '',
 }
 
+async function apiRequest(path, options = {}) {
+  const headers = options.body
+    ? { 'Content-Type': 'application/json', ...(options.headers || {}) }
+    : options.headers
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+  })
+
+  if (!response.ok) {
+    let message = 'Request failed'
+
+    try {
+      const error = await response.json()
+      message = error.message || message
+    } catch {
+      message = response.statusText || message
+    }
+
+    throw new Error(message)
+  }
+
+  const contentType = response.headers.get('content-type') || ''
+  return contentType.includes('application/json') ? response.json() : response.text()
+}
+
+function getPostList({ status, page = 1, limit = POST_LIMIT }) {
+  const params = new URLSearchParams({
+    status,
+    page: String(page),
+    limit: String(limit),
+    sort_by: 'created_date',
+    sort_order: 'desc',
+  })
+
+  return apiRequest(`/posts?${params.toString()}`)
+}
+
 function getPlainText(content) {
   return content.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 function App() {
-  const [articles, setArticles] = useState(initialArticles)
+  const [articles, setArticles] = useState([])
+  const [statusCounts, setStatusCounts] = useState({ Publish: 0, Draft: 0, Trash: 0 })
+  const [listPage, setListPage] = useState(1)
+  const [listPagination, setListPagination] = useState({ page: 1, limit: POST_LIMIT, total: 0, total_pages: 1 })
   const [currentArticle, setCurrentArticle] = useState(emptyArticle)
   const [editingId, setEditingId] = useState(null)
   const [page, setPage] = useState('all')
-  const [activeTab, setActiveTab] = useState('Published')
+  const [activeTab, setActiveTab] = useState('Publish')
   const [confirmation, setConfirmation] = useState(null)
   const [previewArticle, setPreviewArticle] = useState(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
 
   const isEditing = editingId !== null
   const isFormOpen = page === 'add' || page === 'edit'
-  const visibleArticles = useMemo(
-    () => articles.filter((article) => article.status === activeTab),
-    [articles, activeTab],
-  )
+  const visibleArticles = useMemo(() => articles, [articles])
+
+  useEffect(() => {
+    if (page !== 'all') {
+      return
+    }
+
+    let ignore = false
+
+    async function loadPosts() {
+      setIsLoading(true)
+      setErrorMessage('')
+
+      try {
+        const [listResponse, ...countResponses] = await Promise.all([
+          getPostList({ status: activeTab, page: listPage }),
+          ...tabs.map((tab) => getPostList({ status: tab.value, page: 1, limit: 1 })),
+        ])
+
+        if (ignore) {
+          return
+        }
+
+        setArticles(listResponse.data || [])
+        setListPagination(listResponse.pagination || { page: listPage, limit: POST_LIMIT, total: 0, total_pages: 1 })
+        setStatusCounts(Object.fromEntries(tabs.map((tab, index) => [
+          tab.value,
+          countResponses[index]?.pagination?.total || 0,
+        ])))
+      } catch (error) {
+        if (!ignore) {
+          setErrorMessage(error.message)
+        }
+      } finally {
+        if (!ignore) {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    loadPosts()
+
+    return () => {
+      ignore = true
+    }
+  }, [activeTab, listPage, page, refreshKey])
 
   function openAllPosts() {
     setCurrentArticle(emptyArticle)
@@ -101,30 +167,46 @@ function App() {
     setCurrentArticle((article) => ({ ...article, [field]: value }))
   }
 
-  function saveArticle(event, status) {
+  async function saveArticle(event, status) {
     event.preventDefault()
 
     if (!currentArticle.title.trim() || !currentArticle.category.trim() || !getPlainText(currentArticle.content)) {
       return
     }
 
-    if (isEditing) {
-      setArticles((items) => items.map((article) => (
-        article.id === editingId ? { ...article, ...currentArticle, status } : article
-      )))
-    } else {
-      setArticles((items) => [
-        ...items,
-        {
-          ...currentArticle,
-          id: Date.now(),
-          status,
-        },
-      ])
-    }
+    setIsLoading(true)
+    setErrorMessage('')
 
-    setActiveTab(status)
-    closeForm()
+    try {
+      if (isEditing) {
+        await apiRequest(`/post?id=${editingId}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            title: currentArticle.title,
+            content: currentArticle.content,
+            category: currentArticle.category,
+          }),
+        })
+        await apiRequest(`/post/status?id=${editingId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status }),
+        })
+      } else {
+        await apiRequest('/post', {
+          method: 'POST',
+          body: JSON.stringify({ ...currentArticle, status }),
+        })
+      }
+
+      setActiveTab(status)
+      setListPage(1)
+      setRefreshKey((key) => key + 1)
+      closeForm()
+    } catch (error) {
+      setErrorMessage(error.message)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   function requestMoveToTrash(articleId) {
@@ -137,16 +219,23 @@ function App() {
     setConfirmation({ action: 'trash', article })
   }
 
-  function moveToTrash(articleId) {
+  async function moveToTrash(articleId) {
     setConfirmation(null)
 
-    setArticles((items) => items.map((article) => (
-      article.id === articleId ? { ...article, status: 'Trashed' } : article
-    )))
-    setActiveTab('Trashed')
+    try {
+      await apiRequest(`/post/status?id=${articleId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'Trash' }),
+      })
+      setActiveTab('Trash')
+      setListPage(1)
+      setRefreshKey((key) => key + 1)
 
-    if (articleId === editingId) {
-      closeForm()
+      if (articleId === editingId) {
+        closeForm()
+      }
+    } catch (error) {
+      setErrorMessage(error.message)
     }
   }
 
@@ -160,13 +249,20 @@ function App() {
     setConfirmation({ action: 'restore', article })
   }
 
-  function restoreArticle(articleId) {
+  async function restoreArticle(articleId) {
     setConfirmation(null)
 
-    setArticles((items) => items.map((article) => (
-      article.id === articleId ? { ...article, status: 'Draft' } : article
-    )))
-    setActiveTab('Draft')
+    try {
+      await apiRequest(`/post/status?id=${articleId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'Draft' }),
+      })
+      setActiveTab('Draft')
+      setListPage(1)
+      setRefreshKey((key) => key + 1)
+    } catch (error) {
+      setErrorMessage(error.message)
+    }
   }
 
   if (previewArticle) {
@@ -216,6 +312,8 @@ function App() {
           )}
         </header>
 
+        {errorMessage && page !== 'preview' && <div className="error-banner">{errorMessage}</div>}
+
         {isFormOpen ? (
           <ArticleForm
             article={currentArticle}
@@ -225,16 +323,19 @@ function App() {
             onSubmit={saveArticle}
           />
         ) : page === 'preview' ? (
-          <Preview articles={articles} onReadMore={setPreviewArticle} />
+          <Preview onReadMore={setPreviewArticle} />
         ) : (
           <ArticleList
             activeTab={activeTab}
             articles={visibleArticles}
-            allArticles={articles}
+            isLoading={isLoading}
+            pagination={listPagination}
             onEdit={openEditForm}
+            onPageChange={setListPage}
             onTabChange={setActiveTab}
             onRestore={requestRestoreArticle}
             onTrash={requestMoveToTrash}
+            statusCounts={statusCounts}
           />
         )}
       </section>
@@ -280,17 +381,10 @@ function ConfirmModal({ action, article, onCancel, onConfirm }) {
   )
 }
 
-function ArticleList({ activeTab, articles, allArticles, onEdit, onRestore, onTabChange, onTrash }) {
-  const [currentPage, setCurrentPage] = useState(1)
-  const pageSize = 2
-  const totalPages = Math.max(1, Math.ceil(articles.length / pageSize))
-  const visiblePage = Math.min(currentPage, totalPages)
-  const startIndex = (visiblePage - 1) * pageSize
-  const pageArticles = articles.slice(startIndex, startIndex + pageSize)
-
+function ArticleList({ activeTab, articles, isLoading, onEdit, onPageChange, onRestore, onTabChange, onTrash, pagination, statusCounts }) {
   function changeTab(tab) {
-    setCurrentPage(1)
     onTabChange(tab)
+    onPageChange(1)
   }
 
   return (
@@ -303,7 +397,7 @@ function ArticleList({ activeTab, articles, allArticles, onEdit, onRestore, onTa
             onClick={() => changeTab(tab.value)}
           >
             {tab.label}
-            <span>{allArticles.filter((article) => article.status === tab.value).length}</span>
+            <span>{statusCounts[tab.value] || 0}</span>
           </button>
         ))}
       </div>
@@ -315,7 +409,11 @@ function ArticleList({ activeTab, articles, allArticles, onEdit, onRestore, onTa
           <span>Actions</span>
         </div>
 
-        {articles.length ? pageArticles.map((article) => (
+        {isLoading ? (
+          <div className="empty-state inside-table">
+            <strong>Loading posts...</strong>
+          </div>
+        ) : articles.length ? articles.map((article) => (
           <article className="table-row" key={article.id}>
             <div className="article-cell">
               <strong>{article.title}</strong>
@@ -326,7 +424,7 @@ function ArticleList({ activeTab, articles, allArticles, onEdit, onRestore, onTa
               <button className="icon-button" onClick={() => onEdit(article)} aria-label={`Edit ${article.title}`}>
                 <FilePenLine size={17} />
               </button>
-              {activeTab === 'Trashed' ? (
+              {activeTab === 'Trash' ? (
                 <button className="icon-button restore" onClick={() => onRestore(article.id)} aria-label={`Restore ${article.title}`}>
                   <RotateCcw size={17} />
                 </button>
@@ -347,9 +445,9 @@ function ArticleList({ activeTab, articles, allArticles, onEdit, onRestore, onTa
 
       {articles.length > 0 && (
         <Pagination
-          currentPage={visiblePage}
-          totalPages={totalPages}
-          onPageChange={setCurrentPage}
+          currentPage={pagination.page || 1}
+          totalPages={pagination.total_pages || 1}
+          onPageChange={onPageChange}
         />
       )}
     </>
@@ -444,7 +542,7 @@ function ArticleForm({ article, isEditing, onBack, onChange, onSubmit }) {
           <button className="button button-secondary" type="button" onClick={(event) => submitWithStatus(event, 'Draft')}>
             Draft
           </button>
-          <button className="button button-primary" type="button" onClick={(event) => submitWithStatus(event, 'Published')}>
+          <button className="button button-primary" type="button" onClick={(event) => submitWithStatus(event, 'Publish')}>
             <Send size={16} />
             Publish
           </button>
@@ -570,15 +668,60 @@ function ArticleDetail({ article, onBack }) {
   )
 }
 
-function Preview({ articles, onReadMore }) {
+function Preview({ onReadMore }) {
   const [currentPage, setCurrentPage] = useState(1)
-  const publishedArticles = articles.filter((article) => article.status === 'Published')
-  const pageSize = 2
-  const totalPages = Math.max(1, Math.ceil(publishedArticles.length / pageSize))
-  const startIndex = (currentPage - 1) * pageSize
-  const pageArticles = publishedArticles.slice(startIndex, startIndex + pageSize)
+  const [pageArticles, setPageArticles] = useState([])
+  const [pagination, setPagination] = useState({ page: 1, limit: POST_LIMIT, total: 0, total_pages: 1 })
+  const [isLoading, setIsLoading] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
 
-  if (!publishedArticles.length) {
+  useEffect(() => {
+    let ignore = false
+
+    async function loadPreview() {
+      setIsLoading(true)
+      setErrorMessage('')
+
+      try {
+        const response = await getPostList({ status: 'Publish', page: currentPage })
+
+        if (ignore) {
+          return
+        }
+
+        setPageArticles(response.data || [])
+        setPagination(response.pagination || { page: currentPage, limit: POST_LIMIT, total: 0, total_pages: 1 })
+      } catch (error) {
+        if (!ignore) {
+          setErrorMessage(error.message)
+        }
+      } finally {
+        if (!ignore) {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    loadPreview()
+
+    return () => {
+      ignore = true
+    }
+  }, [currentPage])
+
+  if (isLoading) {
+    return (
+      <div className="empty-state">
+        <strong>Loading preview...</strong>
+      </div>
+    )
+  }
+
+  if (errorMessage) {
+    return <div className="error-banner">{errorMessage}</div>
+  }
+
+  if (!pageArticles.length) {
     return (
       <div className="empty-state">
         <strong>No posts to preview</strong>
@@ -603,7 +746,7 @@ function Preview({ articles, onReadMore }) {
         ))}
       </div>
 
-      <Pagination currentPage={currentPage} totalPages={totalPages} onPageChange={setCurrentPage} />
+      <Pagination currentPage={pagination.page || 1} totalPages={pagination.total_pages || 1} onPageChange={setCurrentPage} />
     </>
   )
 }

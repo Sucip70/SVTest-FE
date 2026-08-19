@@ -308,6 +308,16 @@ h2 {
   box-shadow: none;
 }
 
+.error-banner {
+  border: 1px solid #f0b4ad;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  color: var(--danger);
+  background: #fff4f2;
+  font-weight: 700;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
