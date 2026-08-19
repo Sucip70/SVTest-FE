@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import Image from '@tiptap/extension-image'
 import StarterKit from '@tiptap/starter-kit'
-import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Eye, FileImage, FilePenLine, Heading2, Italic, List as ListIcon, ListOrdered, Plus, RotateCcw, Send, Trash2 } from 'lucide-react'
+import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Eye, FileImage, FilePenLine, Heading2, Italic, List as ListIcon, ListOrdered, Plus, RotateCcw, Search, Send, Trash2 } from 'lucide-react'
 import './App.css'
 
 const API_BASE_URL = import.meta.env.DEV ? '/api' : 'https://svtest-1014951496037.asia-southeast2.run.app'
@@ -47,14 +47,22 @@ async function apiRequest(path, options = {}) {
   return contentType.includes('application/json') ? response.json() : response.text()
 }
 
-function getPostList({ status, page = 1, limit = POST_LIMIT }) {
+function getPostList({ category, status, title, page = 1, limit = POST_LIMIT, sortBy = 'created_date', sortOrder = 'desc' }) {
   const params = new URLSearchParams({
     status,
     page: String(page),
     limit: String(limit),
-    sort_by: 'created_date',
-    sort_order: 'desc',
+    sort_by: sortBy,
+    sort_order: sortOrder,
   })
+
+  if (title?.trim()) {
+    params.set('title', title.trim())
+  }
+
+  if (category?.trim()) {
+    params.set('category', category.trim())
+  }
 
   return apiRequest(`/posts?${params.toString()}`)
 }
@@ -72,6 +80,9 @@ function App() {
   const [editingId, setEditingId] = useState(null)
   const [page, setPage] = useState('all')
   const [activeTab, setActiveTab] = useState('Publish')
+  const [tableSort, setTableSort] = useState({ sortBy: 'created_date', sortOrder: 'desc' })
+  const [tableSearch, setTableSearch] = useState({ title: '', category: '' })
+  const [previewTitle, setPreviewTitle] = useState('')
   const [confirmation, setConfirmation] = useState(null)
   const [previewArticle, setPreviewArticle] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -95,8 +106,8 @@ function App() {
 
       try {
         const [listResponse, ...countResponses] = await Promise.all([
-          getPostList({ status: activeTab, page: listPage }),
-          ...tabs.map((tab) => getPostList({ status: tab.value, page: 1, limit: 1 })),
+          getPostList({ ...tableSearch, status: activeTab, page: listPage, ...tableSort }),
+          ...tabs.map((tab) => getPostList({ ...tableSearch, status: tab.value, page: 1, limit: 1 })),
         ])
 
         if (ignore) {
@@ -125,7 +136,20 @@ function App() {
     return () => {
       ignore = true
     }
-  }, [activeTab, listPage, page, refreshKey])
+  }, [activeTab, listPage, page, refreshKey, tableSearch, tableSort])
+
+  function searchTable(field, value) {
+    setTableSearch((currentSearch) => ({ ...currentSearch, [field]: value }))
+    setListPage(1)
+  }
+
+  function sortTable(sortBy) {
+    setTableSort((currentSort) => ({
+      sortBy,
+      sortOrder: currentSort.sortBy === sortBy && currentSort.sortOrder === 'asc' ? 'desc' : 'asc',
+    }))
+    setListPage(1)
+  }
 
   function openAllPosts() {
     setCurrentArticle(emptyArticle)
@@ -311,6 +335,17 @@ function App() {
               Add article
             </button>
           )}
+          {page === 'preview' && (
+            <label className="preview-search">
+              <span className="sr-only">Search title</span>
+              <Search size={17} />
+              <input
+                value={previewTitle}
+                onChange={(event) => setPreviewTitle(event.target.value)}
+                placeholder="Search..."
+              />
+            </label>
+          )}
         </header>
 
         {errorMessage && page !== 'preview' && <div className="error-banner">{errorMessage}</div>}
@@ -324,7 +359,7 @@ function App() {
             onSubmit={saveArticle}
           />
         ) : page === 'preview' ? (
-          <Preview onReadMore={setPreviewArticle} />
+          <Preview onReadMore={setPreviewArticle} titleSearch={previewTitle} />
         ) : (
           <ArticleList
             activeTab={activeTab}
@@ -333,9 +368,13 @@ function App() {
             pagination={listPagination}
             onEdit={openEditForm}
             onPageChange={setListPage}
+            onSearch={searchTable}
+            onSort={sortTable}
             onTabChange={setActiveTab}
             onRestore={requestRestoreArticle}
             onTrash={requestMoveToTrash}
+            search={tableSearch}
+            sort={tableSort}
             statusCounts={statusCounts}
           />
         )}
@@ -382,7 +421,7 @@ function ConfirmModal({ action, article, onCancel, onConfirm }) {
   )
 }
 
-function ArticleList({ activeTab, articles, isLoading, onEdit, onPageChange, onRestore, onTabChange, onTrash, pagination, statusCounts }) {
+function ArticleList({ activeTab, articles, isLoading, onEdit, onPageChange, onRestore, onSearch, onSort, onTabChange, onTrash, pagination, search, sort, statusCounts }) {
   function changeTab(tab) {
     onTabChange(tab)
     onPageChange(1)
@@ -405,9 +444,24 @@ function ArticleList({ activeTab, articles, isLoading, onEdit, onPageChange, onR
 
       <div className="table-card">
         <div className="table-head">
-          <span>Title</span>
-          <span>Category</span>
+          <SortHeader field="title" label="Title" onSort={onSort} sort={sort} />
+          <SortHeader field="category" label="Category" onSort={onSort} sort={sort} />
           <span>Actions</span>
+        </div>
+        <div className="table-search-row">
+          <input
+            value={search.title}
+            onChange={(event) => onSearch('title', event.target.value)}
+            placeholder="Search title"
+            aria-label="Search title column"
+          />
+          <input
+            value={search.category}
+            onChange={(event) => onSearch('category', event.target.value)}
+            placeholder="Search category"
+            aria-label="Search category column"
+          />
+          <span />
         </div>
 
         {isLoading ? (
@@ -452,6 +506,18 @@ function ArticleList({ activeTab, articles, isLoading, onEdit, onPageChange, onR
         />
       )}
     </>
+  )
+}
+
+function SortHeader({ field, label, onSort, sort }) {
+  const isActive = sort.sortBy === field
+  const direction = isActive ? sort.sortOrder : null
+
+  return (
+    <button className={isActive ? 'sort-header active' : 'sort-header'} type="button" onClick={() => onSort(field)}>
+      {label}
+      <span>{direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕'}</span>
+    </button>
   )
 }
 
@@ -688,7 +754,7 @@ function ArticleDetail({ article, onBack }) {
   )
 }
 
-function Preview({ onReadMore }) {
+function Preview({ onReadMore, titleSearch }) {
   const [currentPage, setCurrentPage] = useState(1)
   const [pageArticles, setPageArticles] = useState([])
   const [pagination, setPagination] = useState({ page: 1, limit: POST_LIMIT, total: 0, total_pages: 1 })
@@ -703,7 +769,7 @@ function Preview({ onReadMore }) {
       setErrorMessage('')
 
       try {
-        const response = await getPostList({ status: 'Publish', page: currentPage })
+        const response = await getPostList({ status: 'Publish', page: currentPage, title: titleSearch })
 
         if (ignore) {
           return
@@ -727,7 +793,7 @@ function Preview({ onReadMore }) {
     return () => {
       ignore = true
     }
-  }, [currentPage])
+  }, [currentPage, titleSearch])
 
   if (isLoading) {
     return (
