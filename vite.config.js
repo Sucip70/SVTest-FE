@@ -4,6 +4,7 @@ import process from 'node:process'
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: '/SVTest-FE/',
   plugins: [react()],
   server: {
     proxy: {
