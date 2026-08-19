@@ -6,7 +6,7 @@ import { ArrowLeft, Bold, ChevronLeft, ChevronRight, Eye, FileImage, FilePenLine
 import './App.css'
 
 const API_BASE_URL = import.meta.env.DEV ? '/api' : 'https://svtest-1014951496037.asia-southeast2.run.app'
-const POST_LIMIT = 2
+const POST_LIMIT = 5
 
 const tabs = [
   { label: 'Published', value: 'Publish' },
